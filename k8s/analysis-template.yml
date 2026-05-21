@@ -4,8 +4,6 @@ metadata:
   name: canary-error-rate
   namespace: canary-tutorial
 spec:
-  args:
-    - name: service-name
   metrics:
     - name: error-rate
       interval: 30s
@@ -18,10 +16,38 @@ spec:
       provider:
         prometheus:
           address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          # Numerator: 5xx rate on canary pods, user-facing paths only.
+          # `or on() vector(0)` returns 0 when no 5xx has fired (PromQL
+          # would otherwise return an empty vector and the division would
+          # error).
+          #
+          # Denominator: total user-facing request rate on canary pods,
+          # then `> 0.1` as a min-traffic gate. When canary traffic averages
+          # less than 0.1 req/sec over the 2-minute window (~12 requests),
+          # the gate returns no value, the whole expression evaluates to an
+          # empty result, and Argo Rollouts treats the measurement as
+          # Inconclusive instead of false-passing on missing data.
+          #
+          # The path!~"/health|/metrics" filter excludes kubelet probes and
+          # Prometheus scrapes from both halves of the ratio. Probe traffic
+          # is high-volume and always returns 200, so including it would
+          # dilute the signal to near-zero regardless of canary correctness.
           query: |
             (
-              sum(rate(http_requests_total{app="canary-tutorial-app", role="canary", status=~"5.."}[2m]))
+              sum(rate(http_requests_total{
+                app="canary-tutorial-app",
+                role="canary",
+                status=~"5..",
+                path!~"/health|/metrics"
+              }[2m]))
               or on() vector(0)
             )
             /
-            sum(rate(http_requests_total{app="canary-tutorial-app", role="canary"}[2m]))
+            (
+              sum(rate(http_requests_total{
+                app="canary-tutorial-app",
+                role="canary",
+                path!~"/health|/metrics"
+              }[2m]))
+              > 0.1
+            )

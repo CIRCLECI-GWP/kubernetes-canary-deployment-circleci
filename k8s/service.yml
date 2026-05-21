@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: canary-tutorial-app
+  namespace: canary-tutorial
+  labels:
+    app: canary-tutorial-app
+spec:
+  # Selector deliberately does NOT include a role constraint. Both stable
+  # and canary ReplicaSets back this Service. kube-proxy distributes
+  # connections across all Ready endpoints, so each pod's share of user
+  # traffic equals its share of replicas. That's how replica-based canary
+  # routes a slice of production traffic to the new version.
+  selector:
+    app: canary-tutorial-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  type: LoadBalancer

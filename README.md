@@ -1,6 +1,6 @@
 # Canary deployment on Kubernetes with CircleCI and Argo Rollouts
 
-Sample repository for the CircleCI tutorial **How to set up canary deployments on Kubernetes with CircleCI and Argo Rollouts**. It runs a Node.js app under an Argo Rollouts `Rollout` resource that ships new versions to 5% of traffic, then 25%, 50%, and 100%, with each step gated by an `AnalysisTemplate` that queries Prometheus for the canary's error rate. A bad release auto-rolls back without human intervention.
+Sample repository for the CircleCI tutorial **How to set up canary deployments on Kubernetes with CircleCI and Argo Rollouts**. It runs a Node.js app under an Argo Rollouts `Rollout` resource that ships new versions to a graduated share of production traffic (~10%, ~30%, ~50%, 100% with 10 replicas), with each step gated by an `AnalysisTemplate` that queries Prometheus for the canary's error rate on real user requests. A bad release auto-rolls back without human intervention.
 
 ## What's in here
 
@@ -10,8 +10,7 @@ Sample repository for the CircleCI tutorial **How to set up canary deployments o
 ├── k8s/
 │   ├── namespace.yml             # canary-tutorial namespace
 │   ├── rollout.yml               # Argo Rollouts Rollout (replaces Deployment)
-│   ├── service-stable.yml        # LoadBalancer for production traffic
-│   ├── service-canary.yml        # ClusterIP for canary-only probes
+│   ├── service.yml               # Single LoadBalancer for stable + canary
 │   ├── analysis-template.yml     # Prometheus error-rate gate
 │   └── servicemonitor.yml        # Prometheus scrape config
 ├── .circleci/
@@ -63,27 +62,41 @@ Create a context named `canary-tutorial` with these environment variables:
 
 ## Demonstrating an automatic rollback
 
-The sample app reads a `FAIL_RATE` environment variable that returns HTTP 500 for that percentage of requests. Bake a high value into a release to watch the `AnalysisRun` abort the canary:
+The sample app reads a `FAIL_RATE` environment variable that returns HTTP 500 for that percentage of `/` and `/api` requests (`/health` and `/metrics` always return 200, so readiness probes pass and the AnalysisRun is the signal that trips the abort).
 
 ```bash
-# Build a "broken" image (APP_VERSION and FAIL_RATE are baked in via build args)
+# Build a "broken" image: 30% of user requests will return 500.
 docker build \
   --build-arg APP_VERSION=1.2.0-broken \
-  --build-arg FAIL_RATE=10 \
+  --build-arg FAIL_RATE=30 \
   -t $DOCKERHUB_USERNAME/canary-tutorial-app:1.2.0-broken \
   ./app
 docker push $DOCKERHUB_USERNAME/canary-tutorial-app:1.2.0-broken
+```
 
-# Point the Rollout at it (or push the SHA via CircleCI)
+The `AnalysisTemplate` gates on a minimum traffic rate (`> 0.1 req/sec`) so cold-start with zero traffic stays Inconclusive instead of false-passing. To make the demo reproducible without organic production traffic, drive a constant load loop in a separate terminal:
+
+```bash
+LB_IP=$(kubectl get svc canary-tutorial-app -n canary-tutorial \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+while true; do
+  curl -s -o /dev/null "http://${LB_IP}/api"
+  sleep 0.1
+done
+```
+
+Then trigger the canary:
+
+```bash
 kubectl argo rollouts set image canary-tutorial-app \
   canary-tutorial-app=$DOCKERHUB_USERNAME/canary-tutorial-app:1.2.0-broken \
   -n canary-tutorial
 
-# Watch
 kubectl argo rollouts get rollout canary-tutorial-app -n canary-tutorial --watch
 ```
 
-After ~90 seconds the `AnalysisRun` should report failure ≥5% and Argo Rollouts will abort and revert traffic to the stable revision.
+At step 1 (`setWeight: 5`), one of ten pods is canary and ~10% of LB traffic lands on it. With `FAIL_RATE=30`, the canary-scoped error rate is ~30%, well clear of the 5% failure threshold. The `AnalysisRun` records three consecutive Failed measurements after the 60-second `initialDelay`, then `failureLimit: 3` aborts the rollout. End-to-end: ~150 seconds from `set image` to canary scaled back to zero.
 
 ## Manual rollback via CircleCI
 

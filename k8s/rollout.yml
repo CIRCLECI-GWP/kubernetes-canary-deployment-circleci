@@ -11,15 +11,25 @@ metadata:
     circleci.com/component-name: canary-tutorial-app
     circleci.com/version: ${IMAGE_TAG}
 spec:
-  replicas: 5
+  # 10 replicas chosen so the locked setWeight steps (5/25/50/100) map to
+  # 1/3/5/10 pods. Replica-based canary can only represent percentages as
+  # ratios of whole pods, so each setWeight rounds to the nearest tenth.
+  # The 5% step exposes one canary pod alongside nine stable pods, which
+  # is ~10% of LoadBalancer traffic.
+  replicas: 10
   revisionHistoryLimit: 3
   selector:
     matchLabels:
       app: canary-tutorial-app
   strategy:
     canary:
-      stableService: canary-tutorial-app-stable
-      canaryService: canary-tutorial-app-canary
+      # stableService and canaryService are deliberately NOT set. Setting
+      # them is the opt-in for Argo Rollouts to mutate Service selectors
+      # to scope each Service to one ReplicaSet. That's the correct mode
+      # when paired with a traffic-management integration (NGINX/Istio/ALB)
+      # but it's harmful here: it would remove the canary pod from the
+      # LoadBalancer endpoint pool entirely, leaving canary with no user
+      # traffic and the AnalysisRun measuring nothing.
       stableMetadata:
         labels:
           role: stable
@@ -30,9 +40,6 @@ spec:
         templates:
           - templateName: canary-error-rate
         startingStep: 1
-        args:
-          - name: service-name
-            value: canary-tutorial-app-canary
       steps:
         - setWeight: 5
         - pause: { duration: 2m }

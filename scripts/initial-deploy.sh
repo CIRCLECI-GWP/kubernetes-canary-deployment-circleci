@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-time setup: create the canary-tutorial namespace, apply the AnalysisTemplate,
-# the Services, the ServiceMonitor, and the initial Rollout at version 1.0.0.
+# the Service, the ServiceMonitor, and the initial Rollout at version 1.0.0.
 #
 # Required environment variables:
 #   DOCKERHUB_USERNAME   Docker Hub user owning the canary-tutorial-app image
@@ -25,9 +25,8 @@ cd "${REPO_ROOT}"
 echo "==> Creating canary-tutorial namespace"
 kubectl apply -f k8s/namespace.yml
 
-echo "==> Applying Services and AnalysisTemplate"
-kubectl apply -f k8s/service-stable.yml
-kubectl apply -f k8s/service-canary.yml
+echo "==> Applying Service, AnalysisTemplate, and ServiceMonitor"
+kubectl apply -f k8s/service.yml
 kubectl apply -f k8s/analysis-template.yml
 kubectl apply -f k8s/servicemonitor.yml
 
@@ -37,6 +36,6 @@ envsubst < k8s/rollout.yml | kubectl apply -f -
 echo "==> Waiting for Rollout to reach Healthy"
 kubectl argo rollouts status canary-tutorial-app -n canary-tutorial --timeout 5m
 
-echo "==> Stable service endpoint:"
-kubectl get svc canary-tutorial-app-stable -n canary-tutorial \
+echo "==> LoadBalancer endpoint:"
+kubectl get svc canary-tutorial-app -n canary-tutorial \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}' && echo
