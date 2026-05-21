@@ -1,10 +1,12 @@
+'use strict';
+
 const http = require('http');
 const os = require('os');
 const client = require('prom-client');
 
 const PORT = parseInt(process.env.PORT || '3000', 10);
-const APP_VERSION = process.env.APP_VERSION || 'unknown';
-const DEPLOY_SLOT = process.env.DEPLOY_SLOT || 'stable';
+const VERSION = process.env.APP_VERSION || 'unknown';
+const SLOT = process.env.DEPLOY_SLOT || 'stable';
 const FAIL_RATE = Math.max(0, Math.min(100, parseInt(process.env.FAIL_RATE || '0', 10)));
 const HOSTNAME = os.hostname();
 
@@ -31,32 +33,157 @@ function shouldFail() {
   return FAIL_RATE > 0 && Math.random() * 100 < FAIL_RATE;
 }
 
-function htmlPage(payload) {
-  const slotColor = DEPLOY_SLOT === 'canary' ? '#ff9f1c' : '#2ec4b6';
+function renderPage() {
+  const shortVersion = VERSION.length > 12 ? VERSION.slice(0, 7) : VERSION;
+  const timestamp = new Date().toISOString();
+  const slotColor =
+    SLOT === 'canary' ? '#f59e0b' :
+    SLOT === 'stable' ? '#10b981' :
+    '#06b6d4';
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<title>Canary tutorial app</title>
-<style>
-  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 2rem; background: #011627; color: #fdfffc; }
-  .card { max-width: 540px; margin: 4rem auto; background: #1a2433; border-radius: 12px; padding: 2rem; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
-  h1 { margin-top: 0; }
-  .slot { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 999px; background: ${slotColor}; color: #011627; font-weight: 600; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.5rem 1rem; }
-  dt { color: #9aa5b1; }
-  dd { margin: 0; font-family: ui-monospace, SFMono-Regular, monospace; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Canary Deployment Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: #1a1d27;
+      border: 1px solid #2a2d3e;
+      border-radius: 16px;
+      padding: 52px 48px;
+      width: 100%;
+      max-width: 500px;
+      margin: 24px;
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.25);
+      border-radius: 100px;
+      padding: 6px 18px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #f59e0b;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+    }
+    .dot {
+      width: 7px;
+      height: 7px;
+      background: #f59e0b;
+      border-radius: 50%;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      font-size: 13px;
+      color: #6b7080;
+      margin-bottom: 40px;
+      letter-spacing: 0.04em;
+    }
+    .meta {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      text-align: left;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #12141d;
+      border: 1px solid #1e2130;
+      border-radius: 8px;
+      padding: 13px 16px;
+    }
+    .label {
+      font-size: 12px;
+      font-weight: 500;
+      color: #6b7080;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .value {
+      font-family: 'SF Mono', 'Fira Code', 'Fira Mono', monospace;
+      font-size: 12px;
+      color: #c8cde0;
+    }
+    .slot-indicator {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: ${slotColor};
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    .footer {
+      margin-top: 36px;
+      font-size: 11px;
+      color: #3a3d52;
+    }
+    .footer a {
+      color: #4a5080;
+      text-decoration: none;
+    }
+  </style>
 </head>
 <body>
   <div class="card">
-    <h1>Canary tutorial app</h1>
-    <p>Slot: <span class="slot">${payload.slot}</span></p>
-    <dl>
-      <dt>Version</dt><dd>${payload.version}</dd>
-      <dt>Hostname</dt><dd>${payload.hostname}</dd>
-      <dt>Timestamp</dt><dd>${payload.timestamp}</dd>
-    </dl>
+    <div class="badge">
+      <span class="dot"></span>
+      Deployment Successful
+    </div>
+    <h1>Canary Deployment Demo</h1>
+    <p class="subtitle">Kubernetes &nbsp;&middot;&nbsp; CircleCI &nbsp;&middot;&nbsp; Argo Rollouts</p>
+    <div class="meta">
+      <div class="row">
+        <span class="label">Version</span>
+        <span class="value">${shortVersion}</span>
+      </div>
+      <div class="row">
+        <span class="label">Slot</span>
+        <span class="value"><span class="slot-indicator"></span>${SLOT}</span>
+      </div>
+      <div class="row">
+        <span class="label">Pod</span>
+        <span class="value">${HOSTNAME}</span>
+      </div>
+      <div class="row">
+        <span class="label">Timestamp</span>
+        <span class="value">${timestamp}</span>
+      </div>
+    </div>
+    <p class="footer">
+      <a href="https://github.com/CIRCLECI-GWP/kubernetes-canary-deployment-circleci">
+        CIRCLECI-GWP/kubernetes-canary-deployment-circleci
+      </a>
+    </p>
   </div>
 </body>
 </html>`;
@@ -67,65 +194,62 @@ const server = http.createServer((req, res) => {
   const url = req.url || '/';
   const path = url.split('?')[0];
 
-  let status = 200;
-  let body = '';
-  let contentType = 'text/plain; charset=utf-8';
+  const finish = (status) => {
+    const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
+    httpRequestsTotal.labels(String(status), path).inc();
+    httpRequestDuration.labels(String(status), path).observe(elapsed);
+  };
 
-  try {
-    if (path === '/health') {
-      body = JSON.stringify({ status: 'ok' });
-      contentType = 'application/json';
-    } else if (path === '/metrics') {
-      res.setHeader('Content-Type', register.contentType);
-      register.metrics().then((metrics) => {
-        res.writeHead(200);
-        res.end(metrics);
-        const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
-        httpRequestsTotal.labels('200', '/metrics').inc();
-        httpRequestDuration.labels('200', '/metrics').observe(elapsed);
-      });
-      return;
-    } else if (path === '/api' || path === '/') {
-      if (shouldFail()) {
-        status = 500;
-        body = path === '/api'
-          ? JSON.stringify({ error: 'injected failure' })
-          : 'Internal Server Error';
-        contentType = path === '/api' ? 'application/json' : 'text/plain';
-      } else {
-        const payload = {
-          version: APP_VERSION,
-          slot: DEPLOY_SLOT,
-          hostname: HOSTNAME,
-          timestamp: new Date().toISOString(),
-        };
-        if (path === '/api') {
-          body = JSON.stringify(payload);
-          contentType = 'application/json';
-        } else {
-          body = htmlPage(payload);
-          contentType = 'text/html; charset=utf-8';
-        }
-      }
-    } else {
-      status = 404;
-      body = 'Not Found';
-    }
-  } catch (err) {
-    status = 500;
-    body = 'Internal Server Error';
+  if (path === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+    finish(200);
+    return;
   }
 
-  res.writeHead(status, { 'Content-Type': contentType });
-  res.end(body);
+  if (path === '/metrics') {
+    res.setHeader('Content-Type', register.contentType);
+    register.metrics().then((metrics) => {
+      res.writeHead(200);
+      res.end(metrics);
+      finish(200);
+    });
+    return;
+  }
 
-  const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
-  httpRequestsTotal.labels(String(status), path).inc();
-  httpRequestDuration.labels(String(status), path).observe(elapsed);
+  if (path === '/' || path === '/api') {
+    if (shouldFail()) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'injected failure' }));
+      finish(500);
+      return;
+    }
+
+    if (path === '/api') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        version: VERSION,
+        slot: SLOT,
+        hostname: HOSTNAME,
+        timestamp: new Date().toISOString(),
+      }));
+      finish(200);
+      return;
+    }
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(renderPage());
+    finish(200);
+    return;
+  }
+
+  res.writeHead(404);
+  res.end();
+  finish(404);
 });
 
 server.listen(PORT, () => {
-  console.log(`canary-tutorial-app v${APP_VERSION} slot=${DEPLOY_SLOT} fail_rate=${FAIL_RATE}% listening on :${PORT}`);
+  console.log(`canary-tutorial-app v${VERSION} slot=${SLOT} fail_rate=${FAIL_RATE}% listening on :${PORT}`);
 });
 
 function shutdown(signal) {
