@@ -1,0 +1,15 @@
+{
+  "name": "canary-tutorial-app",
+  "version": "1.0.0",
+  "description": "Sample Node.js application for canary deployment tutorial with CircleCI and Argo Rollouts",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "prom-client": "^15.1.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

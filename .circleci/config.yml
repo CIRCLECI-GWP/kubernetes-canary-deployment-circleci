@@ -1,0 +1,120 @@
+version: 2.1
+
+commands:
+  setup-kubectl:
+    description: Install kubectl and configure cluster access
+    steps:
+      - run:
+          name: Install kubectl
+          command: |
+            KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/kubectl
+      - run:
+          name: Install kubectl-argo-rollouts plugin
+          command: |
+            curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+            chmod +x kubectl-argo-rollouts-linux-amd64
+            sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+      - run:
+          name: Configure kubeconfig
+          command: |
+            mkdir -p ~/.kube
+            echo "$KUBECONFIG_DATA" | tr -d '[:space:]' | base64 --decode > ~/.kube/config
+            chmod 600 ~/.kube/config
+
+jobs:
+  build-and-push:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Build Docker image
+          command: |
+            docker build \
+              --build-arg APP_VERSION=$CIRCLE_SHA1 \
+              -t $DOCKERHUB_USERNAME/canary-tutorial-app:$CIRCLE_SHA1 \
+              ./app
+      - run:
+          name: Push to Docker Hub
+          command: |
+            echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+            docker push $DOCKERHUB_USERNAME/canary-tutorial-app:$CIRCLE_SHA1
+
+  update-rollout:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - setup-kubectl
+      - run:
+          name: Plan deployment
+          command: |
+            circleci run release plan "${CIRCLE_JOB}" \
+              --environment-name="production" \
+              --component-name="canary-tutorial-app" \
+              --target-version="$CIRCLE_SHA1"
+      - run:
+          name: Update rollout image
+          command: |
+            kubectl argo rollouts set image canary-tutorial-app \
+              canary-tutorial-app=$DOCKERHUB_USERNAME/canary-tutorial-app:$CIRCLE_SHA1 \
+              -n canary-tutorial
+      - run:
+          name: Update deployment status to running
+          command: circleci run release update "${CIRCLE_JOB}" --status=RUNNING
+
+  monitor-rollout:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - setup-kubectl
+      - run:
+          name: Watch canary progress
+          command: |
+            kubectl argo rollouts get rollout canary-tutorial-app \
+              -n canary-tutorial --watch --timeout 20m
+          no_output_timeout: 25m
+      - run:
+          name: Verify rollout reached Healthy
+          command: |
+            STATUS=$(kubectl argo rollouts status canary-tutorial-app \
+              -n canary-tutorial --timeout 60s)
+            echo "Rollout status: $STATUS"
+            [ "$STATUS" = "Healthy" ] || exit 1
+      - run:
+          name: Log deploy marker
+          command: |
+            circleci run release log \
+              --component-name=canary-tutorial-app \
+              --environment-name=production \
+              --target-version=$CIRCLE_SHA1
+      - run:
+          name: Update deployment status to success
+          command: circleci run release update "${CIRCLE_JOB}" --status=SUCCESS
+          when: on_success
+      - run:
+          name: Update deployment status to failed
+          command: circleci run release update "${CIRCLE_JOB}" --status=FAILED
+          when: on_fail
+
+workflows:
+  build-deploy:
+    jobs:
+      - build-and-push:
+          context: canary-tutorial
+      - update-rollout:
+          requires:
+            - build-and-push
+          context: canary-tutorial
+          filters:
+            branches:
+              only: main
+      - monitor-rollout:
+          requires:
+            - update-rollout
+          context: canary-tutorial

@@ -1,0 +1,81 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: canary-tutorial-app
+  namespace: canary-tutorial
+  annotations:
+    circleci.com/project-id: ${CIRCLE_PROJECT_ID}
+    circleci.com/operation-timeout: 20m
+  labels:
+    app: canary-tutorial-app
+    circleci.com/component-name: canary-tutorial-app
+    circleci.com/version: ${IMAGE_TAG}
+spec:
+  replicas: 5
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: canary-tutorial-app
+  strategy:
+    canary:
+      stableService: canary-tutorial-app-stable
+      canaryService: canary-tutorial-app-canary
+      stableMetadata:
+        labels:
+          role: stable
+      canaryMetadata:
+        labels:
+          role: canary
+      analysis:
+        templates:
+          - templateName: canary-error-rate
+        startingStep: 1
+        args:
+          - name: service-name
+            value: canary-tutorial-app-canary
+      steps:
+        - setWeight: 5
+        - pause: { duration: 2m }
+        - setWeight: 25
+        - pause: { duration: 5m }
+        - setWeight: 50
+        - pause: { duration: 5m }
+        - setWeight: 100
+  template:
+    metadata:
+      labels:
+        app: canary-tutorial-app
+        circleci.com/component-name: canary-tutorial-app
+        circleci.com/version: ${IMAGE_TAG}
+    spec:
+      containers:
+        - name: canary-tutorial-app
+          image: ${DOCKERHUB_USERNAME}/canary-tutorial-app:${IMAGE_TAG}
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: DEPLOY_SLOT
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['role']
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

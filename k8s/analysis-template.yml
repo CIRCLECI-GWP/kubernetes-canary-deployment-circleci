@@ -1,0 +1,27 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: canary-error-rate
+  namespace: canary-tutorial
+spec:
+  args:
+    - name: service-name
+  metrics:
+    - name: error-rate
+      interval: 30s
+      initialDelay: 60s
+      count: 10
+      failureLimit: 3
+      consecutiveErrorLimit: 6
+      successCondition: result[0] < 0.01
+      failureCondition: result[0] >= 0.05
+      provider:
+        prometheus:
+          address: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+          query: |
+            (
+              sum(rate(http_requests_total{app="canary-tutorial-app", role="canary", status=~"5.."}[2m]))
+              or on() vector(0)
+            )
+            /
+            sum(rate(http_requests_total{app="canary-tutorial-app", role="canary"}[2m]))

@@ -1,0 +1,85 @@
+version: 2.1
+
+commands:
+  setup-kubectl:
+    description: Install kubectl and configure cluster access
+    steps:
+      - run:
+          name: Install kubectl
+          command: |
+            KUBECTL_VERSION=$(curl -L -s https://dl.k8s.io/release/stable.txt)
+            curl -LO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+            chmod +x kubectl && sudo mv kubectl /usr/local/bin/kubectl
+      - run:
+          name: Install kubectl-argo-rollouts plugin
+          command: |
+            curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+            chmod +x kubectl-argo-rollouts-linux-amd64
+            sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+      - run:
+          name: Configure kubeconfig
+          command: |
+            mkdir -p ~/.kube
+            echo "$KUBECONFIG_DATA" | tr -d '[:space:]' | base64 --decode > ~/.kube/config
+            chmod 600 ~/.kube/config
+
+jobs:
+  rollback:
+    docker:
+      - image: cimg/base:stable
+    environment:
+      COMPONENT_NAME: << pipeline.deploy.component_name >>
+      ENVIRONMENT_NAME: << pipeline.deploy.environment_name >>
+      TARGET_VERSION: << pipeline.deploy.target_version >>
+    steps:
+      - setup-kubectl
+      - run:
+          name: Plan rollback release
+          command: |
+            circleci run release plan "${CIRCLE_JOB}" \
+              --component-name=${COMPONENT_NAME} \
+              --environment-name=${ENVIRONMENT_NAME} \
+              --target-version=${TARGET_VERSION} \
+              --rollback
+      - run:
+          name: Abort in-progress rollout
+          command: |
+            kubectl argo rollouts abort canary-tutorial-app \
+              -n canary-tutorial || true
+      - run:
+          name: Roll back to previous stable revision
+          command: |
+            kubectl argo rollouts undo canary-tutorial-app \
+              -n canary-tutorial
+      - run:
+          name: Wait for rollback to reach Healthy
+          command: |
+            kubectl argo rollouts status canary-tutorial-app \
+              -n canary-tutorial --timeout 10m
+      - run:
+          name: Update rollback status to SUCCESS
+          command: circleci run release update "${CIRCLE_JOB}" --status=SUCCESS
+          when: on_success
+      - run:
+          name: Update rollback status to FAILED
+          command: circleci run release update "${CIRCLE_JOB}" --status=FAILED
+          when: on_fail
+
+  cancel-rollback:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - run:
+          name: Update rollback status to CANCELED
+          command: circleci run release update "${CIRCLE_JOB}" --status=CANCELED
+
+workflows:
+  rollback:
+    jobs:
+      - rollback:
+          context: canary-tutorial
+      - cancel-rollback:
+          context: canary-tutorial
+          requires:
+            - rollback:
+              - canceled
