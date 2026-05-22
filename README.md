@@ -54,11 +54,21 @@ kubectl argo rollouts get rollout canary-tutorial-app -n canary-tutorial --watch
 
 Create a context named `canary-tutorial` with these environment variables:
 
-| Variable             | Value                                                              |
-|----------------------|--------------------------------------------------------------------|
-| `DOCKERHUB_USERNAME` | Docker Hub username                                                |
-| `DOCKERHUB_PASSWORD` | Docker Hub access token                                            |
-| `KUBECONFIG_DATA`    | Base64-encoded kubeconfig (`cat ~/.kube/config \| base64 \| tr -d '[:space:]'`) |
+| Variable             | Value                                                                   |
+|----------------------|-------------------------------------------------------------------------|
+| `DOCKERHUB_USERNAME` | Docker Hub username                                                     |
+| `DOCKERHUB_PASSWORD` | Docker Hub access token                                                 |
+| `KUBECONFIG_DATA`    | Base64-encoded kubeconfig — generate via `./scripts/generate-kubeconfig.sh` |
+
+`scripts/generate-kubeconfig.sh` creates a namespace-scoped `ServiceAccount`, binds it to the built-in `admin` role inside `canary-tutorial`, mints a long-lived token via a Secret of type `kubernetes.io/service-account-token`, and prints a base64-encoded kubeconfig with the token embedded directly. The resulting kubeconfig has no `exec:` provider and no `gke-gcloud-auth-plugin` dependency, so the CircleCI runner uses it as-is — no gcloud SDK needed.
+
+```bash
+# Run with kubectl already pointed at the target cluster
+./scripts/generate-kubeconfig.sh > /tmp/canary-kubeconfig.b64
+pbcopy < /tmp/canary-kubeconfig.b64    # macOS
+```
+
+Paste the resulting string as `KUBECONFIG_DATA` in the context. The token is namespace-scoped to `canary-tutorial`; rotating it means re-running the script and updating the context value.
 
 ## Demonstrating an automatic rollback
 
